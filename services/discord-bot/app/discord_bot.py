@@ -1,9 +1,15 @@
+from discord import Intents
 from discord.ext import commands
+import os
 
-bot = commands.Bot(command_prefix="!")
+intents = Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"Discord Bot ready! Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}")
 
-bot.run("YOUR_DISCORD_TOKEN")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+bot.run(TOKEN)

@@ -1,19 +1,21 @@
 version: "3.9"
 
 services:
-  redis:
-    image: redis:7
-    container_name: redis
+  twitch-bot:
+    build:
+      context: .
+      dockerfile: services/twitch-bot/Dockerfile
+    container_name: twitch-bot
+    env_file:
+      - ./docker/.env
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
     networks:
-      - botnet
+      - app-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     volumes:
-      - redis_data:/data
+      - twitch_logs:/app/logs
 
   discord-bot:
     build:
@@ -22,36 +24,20 @@ services:
     container_name: discord-bot
     env_file:
       - ./docker/.env
-    depends_on:
-      redis:
-        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
     networks:
-      - botnet
+      - app-network
     restart: unless-stopped
     volumes:
       - discord_logs:/app/logs
 
-  twitch-bot:
-    build:
-      context: .
-      dockerfile: services/twitch-bot/Dockerfile
-    container_name: twitch-bot
-    env_file:
-      - ./docker/.env
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - botnet
-    restart: unless-stopped
-    volumes:
-      - twitch_logs:/app/logs
-
 networks:
-  botnet:
-    driver: bridge
+  app-network:
+    external: true
+    name: goalkeeper_shared_network
 
 volumes:
-  redis_data:
   discord_logs:
   twitch_logs:
