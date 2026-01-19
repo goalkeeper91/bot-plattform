@@ -6,7 +6,7 @@ class AdminCommands(commands.Component):
 
     @commands.command(name="ping")
     async def ping(self, ctx: commands.Context):
-        await ctx.send("pong 🏓")
+        await ctx.send("Pong 🏓")
 
     @commands.command(name="reload")
     async def reload(self, ctx: commands.Context):

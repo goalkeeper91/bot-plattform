@@ -8,6 +8,8 @@ class TwitchConfig:
     client_secret: str
     bot_id: str
     owner_id: str
+    main_channel: str
+    secret_key: str
     prefix: str = "!"
 
 
@@ -19,6 +21,12 @@ class DatabaseConfig:
     password: str
     database: str
 
+@dataclass(frozen=True)
+class RedisConfig:
+    host: str
+    port: int
+    channel: str
+
 
 def load_twitch_config() -> TwitchConfig:
     return TwitchConfig(
@@ -26,6 +34,8 @@ def load_twitch_config() -> TwitchConfig:
         client_secret=os.environ["TWITCH_BOT_CLIENT_SECRET"],
         bot_id=os.environ["TWITCH_BOT_ID"],
         owner_id=os.environ["TWITCH_OWNER_ID"],
+        secret_key=os.environ["TWITCH_BOT_SECRET_KEY"],
+        main_channel=os.environ["TWITCH_CHANNEL"],
     )
 
 
@@ -36,4 +46,11 @@ def load_db_config() -> DatabaseConfig:
         user=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
         database=os.environ["DB_NAME"],
+    )
+
+def load_redis_config() -> RedisConfig:
+    return RedisConfig(
+        host=os.environ.get("REDIS_HOST", "redis"),
+        port=int(os.environ.get("REDIS_PORT", 6379)),
+        channel=os.environ.get("REDIS_CHANNEL"),
     )
