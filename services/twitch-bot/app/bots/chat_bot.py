@@ -17,6 +17,8 @@ class EventSubChatDebugBot(commands.Bot):
         self.twitch_config = twitch_config
         self._subscribed_channels: set[str] = set()
         self._token_owner: dict[str, str] = {}
+        self.custom_commands = None
+        self.redis_handler = None
 
         super().__init__(
             client_id=twitch_config.client_id,
@@ -32,7 +34,11 @@ class EventSubChatDebugBot(commands.Bot):
         LOGGER.info("🔧 setup_hook gestartet")
 
         from app.commands.custom_commands import CustomCommands
-        await self.add_component(CustomCommands(self))
+
+        # ✅ Speichere Referenz direkt für späteren Zugriff
+        self.custom_commands = CustomCommands(self)
+        await self.add_component(self.custom_commands)
+
         await self.add_component(AdminCommands(self))
 
         self.redis_handler = RedisHandler(self)
@@ -88,7 +94,9 @@ class EventSubChatDebugBot(commands.Bot):
             message.text,
         )
 
-        await self.process_commands(message)
+        if self.custom_commands:
+            await self.custom_commands.handle_message(message)
+        #await self.process_commands(message)
 
     async def event_token_refreshed(self, token, refresh):
         LOGGER.info("🔄 Token refreshed")
@@ -125,8 +133,8 @@ class EventSubChatDebugBot(commands.Bot):
         )
 
     async def event_oauth_authorized(
-        self,
-        payload: authentication.UserTokenPayload,
+            self,
+            payload: authentication.UserTokenPayload,
     ) -> None:
         LOGGER.info("🔐 OAuth autorisiert für user_id=%s", payload.user_id)
 
@@ -184,6 +192,22 @@ class EventSubChatDebugBot(commands.Bot):
         )
 
         LOGGER.info("✅ Channel erfolgreich subscribed: %s", twitch_user_id)
+
+    async def reload_commands(self, twitch_user_id: str = None):
+        LOGGER.info(
+            "🔄 Reload Commands aufgerufen | user_id=%s | subscribed=%s",
+            twitch_user_id,
+            twitch_user_id in self._subscribed_channels if twitch_user_id else "ALL"
+        )
+
+        try:
+            if hasattr(self.custom_commands, 'reload_commands'):
+                await self.custom_commands.reload_commands(twitch_user_id)
+                LOGGER.info("✅ Commands erfolgreich neu geladen")
+            else:
+                LOGGER.error("❌ CustomCommands hat keine reload_commands Methode!")
+        except Exception as e:
+            LOGGER.error("❌ Fehler beim Reload: %s", e, exc_info=True)
 
     async def close(self):
         LOGGER.info("🛑 Bot shutdown")
