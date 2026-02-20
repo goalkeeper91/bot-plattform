@@ -33,17 +33,17 @@ class CustomCommands(commands.Component):
             async with self.bot.db.acquire() as conn:
                 query = """
                         SELECT cc.channel_id, \
-                               cc.command AS trigger, \
+                               cc.trigger, \
                                cc.response, \
                                cc.cooldown, \
                                tc.twitch_user_id
-                        FROM chat_commands cc
-                                 JOIN twitch_channels tc ON cc.channel_id = tc.id
+                        FROM twitch_chat_commands cc
+                                 JOIN twitch_channels tc ON cc.channel_id::bigint = tc.id
                         WHERE cc.enabled = true \
                         """
 
                 if channel_id:
-                    query += " AND cc.channel_id = $1::bigint"
+                    query += " AND cc.channel_id = $1"
                     rows = await conn.fetch(query, channel_id)
                 else:
                     rows = await conn.fetch(query)
@@ -79,14 +79,12 @@ class CustomCommands(commands.Component):
         """Handler für eingehende Chat-Nachrichten"""
         LOGGER.debug("📨 CustomCommands.handle_message aufgerufen")
 
-        # Eigene Nachrichten ignorieren (Bot ID aus Config verwenden)
         bot_id = str(self.bot.twitch_config.bot_id)
         if str(message.chatter.id) == bot_id:
             return
 
         prefix = self.bot.twitch_config.prefix
         if not message.text.startswith(prefix):
-            # Keine Command-Message → an process_commands weiterleiten
             await self.bot.process_commands(message)
             return
 
@@ -95,14 +93,12 @@ class CustomCommands(commands.Component):
 
         channel_id = self.channel_map.get(broadcaster_id)
 
-        # Prüfe ob Custom Command existiert
         is_custom_command = False
         if channel_id:
             cmd_data = self.commands_cache.get(channel_id, {}).get(trigger)
             if cmd_data:
                 is_custom_command = True
 
-                # Cooldown Check
                 cooldown_key = f"{channel_id}:{trigger}"
                 now = time.time()
 
@@ -113,13 +109,20 @@ class CustomCommands(commands.Component):
 
                 try:
                     # ✅ Erstelle Context aus Message und nutze ctx.send()
-                    # Das ist der gleiche Mechanismus wie bei AdminCommands
                     ctx = self.bot.get_context(message)
 
                     if ctx:
                         await ctx.send(cmd_data["response"])
 
                         self.cooldowns[cooldown_key] = now
+
+                        # ✅ Track successful command execution
+                        if hasattr(self.bot, 'stats') and self.bot.stats:
+                            await self.bot.stats.track_command(
+                                command_name=trigger,
+                                channel_id=channel_id,
+                                success=True
+                            )
 
                         LOGGER.info(
                             "✅ Custom Command | channel=%s | !%s",
@@ -129,11 +132,24 @@ class CustomCommands(commands.Component):
                     else:
                         LOGGER.error("❌ Konnte keinen Context erstellen")
 
+                        if hasattr(self.bot, 'stats') and self.bot.stats:
+                            await self.bot.stats.track_command(
+                                command_name=trigger,
+                                channel_id=channel_id,
+                                success=False
+                            )
+
                 except Exception:
                     LOGGER.exception("❌ Fehler beim Senden des Custom Commands")
 
-                # Custom Command wurde ausgeführt → NICHT an handle_commands weiterleiten
+                    # ✅ Track failed command
+                    if hasattr(self.bot, 'stats') and self.bot.stats:
+                        await self.bot.stats.track_command(
+                            command_name=trigger,
+                            channel_id=channel_id,
+                            success=False
+                        )
+
                 return
 
-        # Kein Custom Command → Prüfe auf feste Commands (AdminCommands etc.)
         await self.bot.process_commands(message)
