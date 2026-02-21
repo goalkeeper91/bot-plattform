@@ -9,6 +9,7 @@ from twitchio import authentication, eventsub, ChatMessage
 from app.commands.admin_commands import AdminCommands
 from app.listeners.redis_listener import RedisHandler
 from app.senders.redis_sender import RedisSender
+from app.utils.bot_announcer import BotAnnouncer
 from app.utils.bot_statistics import BotStatistics
 
 LOGGER = logging.getLogger("EventSubChatDebugBot")
@@ -16,6 +17,7 @@ LOGGER = logging.getLogger("EventSubChatDebugBot")
 
 class EventSubChatDebugBot(commands.Bot):
     def __init__(self, *, twitch_config, db_pool, crypto, **kwargs: Any):
+        self.announcer = None
         self.stats = None
         self.status_sender = None
         self.redis_handler = None
@@ -73,6 +75,9 @@ class EventSubChatDebugBot(commands.Bot):
 
         await self.add_component(VoteCommands(self))
         LOGGER.info("✅ Vote Commands Component geladen")
+
+        self.announcer = BotAnnouncer(self)
+        LOGGER.info("✅ Bot Announcer initialisiert")
 
         self.redis_handler = RedisHandler(self)
         await self.redis_handler.start()

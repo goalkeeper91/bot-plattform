@@ -91,6 +91,20 @@ class RedisHandler:
             LOGGER.warning("⚠️ Unvollständiges Payload (kein type): %s", payload)
             return
 
+        if event == "BOT_ANNOUNCE":
+            message = payload.get("message")
+            channel_id = payload.get("channel_id")
+
+            if not message:
+                LOGGER.warning("⚠️ BOT_ANNOUNCE ohne message")
+                return
+
+            if hasattr(self.bot, 'announcer'):
+                await self.bot.announcer.announce(message, channel_id)
+            else:
+                LOGGER.error("❌ Bot Announcer nicht initialisiert!")
+            return
+
         if event == "JOIN_CHANNEL":
             if not twitch_id:
                 LOGGER.warning("⚠️ JOIN_CHANNEL ohne twitch_user_id")
