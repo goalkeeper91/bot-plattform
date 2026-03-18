@@ -29,6 +29,7 @@ class EventSubChatDebugBot(commands.Bot):
         self.custom_commands = None
         self.start_time = datetime.now(timezone.utc)
         self._is_running = False  # ✅ Initial False
+        self._bot_token_loaded = False # ✅ Track if bot token was successfully loaded
 
         super().__init__(
             client_id=twitch_config.client_id,
@@ -117,31 +118,43 @@ class EventSubChatDebugBot(commands.Bot):
                 LOGGER.warning("⚠️ Ungültiges Token für user_id=%s", user_id)
                 continue
 
-            await self.add_token(access, refresh)
-            self._token_owner[access] = user_id
+            try:
+                await self.add_token(access, refresh)
+                self._token_owner[access] = user_id
+                
+                if is_bot:
+                    # Check if this matches our config bot_id
+                    if user_id == str(self.twitch_config.bot_id):
+                        self._bot_token_loaded = True
+                        LOGGER.info("🤖 Bot-Token erfolgreich geladen und verifiziert: %s", user_id)
+                    else:
+                        LOGGER.info("🤖 Ein Bot-Token wurde geladen (%s), entspricht aber nicht der Config-ID (%s)", user_id, self.twitch_config.bot_id)
+                    continue
 
-            if is_bot:
-                LOGGER.info("🤖 Bot-Token geladen: %s", user_id)
-                continue
+                # Chat Message Subscription
+                LOGGER.info("📡 Subscribe ChatMessage | broadcaster=%s", user_id)
 
-            # Chat Message Subscription
-            LOGGER.info("📡 Subscribe ChatMessage | broadcaster=%s", user_id)
+                if user_id in self._subscribed_channels:
+                    LOGGER.info("ℹ️ Channel %s bereits subscribed", user_id)
+                    continue
 
-            if user_id in self._subscribed_channels:
-                LOGGER.info("ℹ️ Channel %s bereits subscribed", user_id)
-                continue
+                self._subscribed_channels.add(user_id)
+                
+                # Check if we have bot token before queuing subscription
+                # (Actual subscription happens later or immediately depending on lib state)
+                # But here we just set up intent.
+                
+                chat = eventsub.ChatMessageSubscription(
+                    broadcaster_user_id=user_id,
+                    user_id=str(self.twitch_config.bot_id),
+                )
 
-            self._subscribed_channels.add(user_id)
-
-            chat = eventsub.ChatMessageSubscription(
-                broadcaster_user_id=user_id,
-                user_id=str(self.twitch_config.bot_id),
-            )
-
-            await self.subscribe_websocket(
-                chat,
-                token_for=str(self.twitch_config.bot_id),
-            )
+                await self.subscribe_websocket(
+                    chat,
+                    token_for=str(self.twitch_config.bot_id),
+                )
+            except Exception as e:
+                LOGGER.error("❌ Fehler beim Laden/Subscriben für %s: %s", user_id, e)
 
     async def event_ready(self) -> None:
         LOGGER.info("✅ Bot bereit: %s (%s)", self.user.name, self.user.id)
@@ -151,6 +164,10 @@ class EventSubChatDebugBot(commands.Bot):
             self._is_running = True
             self.start_time = datetime.now(timezone.utc)
             LOGGER.info("✅ Bot Status: RUNNING")
+
+        # Warn if bot token missing
+        if not self._bot_token_loaded:
+            LOGGER.critical("⛔ BOT TOKEN NICHT GELADEN! EventSub Subscriptions werden fehlschlagen. Prüfe DB (users.is_bot=true) und Config (TWITCH_BOT_ID).")
 
         # ✅ Starte Heartbeat wenn noch nicht gestartet
         if self.status_sender and (not hasattr(self.status_sender, '_heartbeat_task') or
@@ -174,6 +191,10 @@ class EventSubChatDebugBot(commands.Bot):
             if user_id in self._subscribed_channels:
                 LOGGER.info("ℹ️ Channel %s bereits subscribed", user_id)
                 continue
+
+            if not self._bot_token_loaded:
+                 LOGGER.warning("⚠️ Überspringe Subscription für %s, da kein Bot-Token vorhanden ist.", user_id)
+                 continue
 
             self._subscribed_channels.add(user_id)
 
@@ -255,6 +276,8 @@ class EventSubChatDebugBot(commands.Bot):
         await self.add_token(payload.access_token, payload.refresh_token)
 
         if payload.user_id == self.twitch_config.bot_id:
+            self._bot_token_loaded = True
+            LOGGER.info("✅ Bot-Token via OAuth nachgeladen!")
             return
 
         self._token_owner[payload.access_token] = payload.user_id
