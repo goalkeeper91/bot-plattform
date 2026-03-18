@@ -93,14 +93,13 @@ class RedisHandler:
 
         if event == "BOT_ANNOUNCE":
             message = payload.get("message")
-            channel_id = payload.get("channel_id")
 
             if not message:
                 LOGGER.warning("⚠️ BOT_ANNOUNCE ohne message")
                 return
 
             if hasattr(self.bot, 'announcer'):
-                await self.bot.announcer.announce(message, channel_id)
+                await self.bot.announcer.announce(message, twitch_id)
             else:
                 LOGGER.error("❌ Bot Announcer nicht initialisiert!")
             return

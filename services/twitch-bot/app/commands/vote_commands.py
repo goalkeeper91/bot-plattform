@@ -2,7 +2,7 @@
 Vote Commands Component
 Handles voting system for community game development
 """
-
+import asyncio
 import logging
 import aiohttp
 from twitchio.ext import commands
@@ -375,3 +375,4 @@ class VoteCommands(commands.Component):
                 )
         else:
             await ctx.send("❌ Failed to create vote")
+            
