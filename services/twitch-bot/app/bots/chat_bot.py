@@ -340,8 +340,8 @@ class EventSubChatDebugBot(commands.Bot):
                 LOGGER.warning("⚠️ Status Sender nicht verfügbar - kein Heartbeat")
 
             # Twitch Connection starten
-            connection_method = getattr(self, "connect")
-            asyncio.create_task(connection_method())
+            # FIX: twitchio 3.x uses start() or login(), connect() is removed/internal
+            asyncio.create_task(self.start())
 
             LOGGER.info("✅ Bot-Verbindung wird im Hintergrund aufgebaut...")
         except Exception as e:

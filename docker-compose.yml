@@ -34,7 +34,7 @@ services:
 networks:
   app-network:
     external: true
-    name: goalkeeper_shared_network
+    name: goalkeeper_prod_network
 
 volumes:
   discord_logs:
