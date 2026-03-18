@@ -1,14 +1,15 @@
-name: Deploy Bot Platform
+name: Deploy Bots (Docker)
 
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*'  # Trigger nur bei Version Tags (v1.0.0, v1.2.3, etc.)
+  workflow_dispatch:  # Manueller Trigger
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: 📦 Checkout Repository
@@ -26,144 +27,148 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       #########################################
-      # BACKUP CURRENT DEPLOYMENT
+      # BACKUP CURRENT BOTS
       #########################################
-      - name: 💾 Backup Current Deployment
+      - name: 💾 Backup Current Bots
         run: |
           ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            if [ -d /home/${{ secrets.SERVER_USER }}/app/bot-plattform ]; then
-              BACKUP_DIR=/home/${{ secrets.SERVER_USER }}/backups/bot_backup_$(date +%Y%m%d_%H%M%S)
+            cd ~/app
+            
+            if [ -d "bot-plattform" ]; then
+              BACKUP_DIR=~/backups/bots_backup_$(date +%Y%m%d_%H%M%S)
               mkdir -p $BACKUP_DIR
               
-              echo "📦 Backing up to $BACKUP_DIR"
-              cp -r /home/${{ secrets.SERVER_USER }}/app/bot-plattform $BACKUP_DIR/
+              echo "📦 Backing up bots to $BACKUP_DIR"
+              cp -r bot-plattform $BACKUP_DIR/
               
-              # Backup .env file
-              if [ -f /home/${{ secrets.SERVER_USER }}/app/bot-plattform/docker/.env ]; then
-                cp /home/${{ secrets.SERVER_USER }}/app/bot-plattform/docker/.env $BACKUP_DIR/.env
+              # Backup docker/.env (wichtig!)
+              if [ -f bot-plattform/docker/.env ]; then
+                cp bot-plattform/docker/.env $BACKUP_DIR/.env
               fi
               
               echo "✅ Backup created"
-            else
-              echo "ℹ️  First deployment - no backup needed"
-            fi
-          EOF
-
-      - name: 🚚 Transfer Code to Server
-        run: |
-          rsync -avz --exclude '.git*' --exclude 'backups' ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/home/${{ secrets.SERVER_USER }}/app/bot-plattform/
-
-      #########################################
-      # CREATE DIRECTORIES & NETWORK
-      #########################################
-      - name: 🏗️ Setup Server Environment
-        run: |
-          ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            echo "🏗️  Setting up server environment..."
-            
-            # Create directories
-            mkdir -p /home/${{ secrets.SERVER_USER }}/app/bot-plattform
-            mkdir -p /home/${{ secrets.SERVER_USER }}/app/bot-plattform/docker
-            mkdir -p /home/${{ secrets.SERVER_USER }}/backups
-            
-            # Create Docker network if not exists
-            if ! docker network ls | grep -q goalkeeper_shared_network; then
-              echo "🌐 Creating Docker network..."
-              docker network create goalkeeper_shared_network
             fi
           EOF
 
       #########################################
-      # RESTART DOCKER SERVICES
+      # DEPLOY BOT CODE
       #########################################
-      - name: 🐳 Build & Restart Docker Containers
+      - name: 🤖 Deploy Bot Code
+        run: |
+          echo "📦 Deploying Bot Platform..."
+          
+          # Erstelle Verzeichnis
+          ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "mkdir -p /home/${{ secrets.SERVER_USER }}/app/bot-plattform"
+          
+          # Deploy komplettes Repo (außer .env!)
+          rsync -av --delete \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude 'docker/.env' \
+            --exclude '.env' \
+            --exclude '.env.local' \
+            --exclude '.venv' \
+            --exclude 'venv' \
+            --exclude '.git' \
+            --exclude '.pytest_cache' \
+            --exclude '*.log' \
+            --exclude 'logs/' \
+            -e "ssh -o StrictHostKeyChecking=yes" \
+            ./ \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/home/${{ secrets.SERVER_USER }}/app/bot-plattform/
+          
+          echo "✅ Bot code deployed to ~/app/bot-plattform/"
+
+      #########################################
+      # REBUILD & RESTART DOCKER CONTAINERS
+      #########################################
+      - name: 🐳 Rebuild & Restart Bots
         run: |
           ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            cd /home/${{ secrets.SERVER_USER }}/app/bot-plattform
+            cd ~/app/bot-plattform
             
-            echo "🔍 Checking docker-compose.yml..."
-            if [ ! -f docker-compose.yml ]; then
-              echo "❌ docker-compose.yml not found!"
-              exit 1
-            fi
+            echo "🔨 Rebuilding Docker images..."
             
-            echo "🔨 Building Docker images..."
-            docker compose build --no-cache
+            # Build beide Bots neu (ohne cache für sauberen Build)
+            docker compose build --no-cache twitch-bot
+            docker compose build --no-cache discord-bot
             
-            echo "🔄 Starting containers..."
-            docker compose down --remove-orphans
-            docker compose up -d
+            echo "✅ Images rebuilt"
             
-            echo "🧹 Cleaning up old images..."
-            docker image prune -f
+            echo "🔄 Restarting bot containers..."
             
-            echo "✅ Deployment finished!"
+            # Restart beide Bots
+            docker compose up -d twitch-bot discord-bot
+            
+            echo "✅ Bots restarted"
+            
+            # Warte kurz damit Container starten
+            sleep 5
           EOF
 
       #########################################
-      # VERIFY STATUS
+      # VERIFY DEPLOYMENT
       #########################################
-      - name: ✅ Verify Deployment
+      - name: ✅ Verify Bot Status
         run: |
           ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            cd /home/${{ secrets.SERVER_USER }}/app/bot-plattform
+            cd ~/app/bot-plattform
             
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📊 Docker Container Status:"
+            echo "🔍 BOT STATUS CHECK"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            
+            # Container Status
+            echo "📊 Container Status:"
             docker compose ps
             
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📜 Recent Logs (Twitch Bot):"
+            echo "📋 TWITCH BOT LOGS (last 20 lines):"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             docker compose logs twitch-bot --tail=20
             
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📜 Recent Logs (Discord Bot):"
+            echo "📋 DISCORD BOT LOGS (last 20 lines):"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             docker compose logs discord-bot --tail=20
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ Deployment Verification Complete"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           EOF
 
       #########################################
-      # HEALTH CHECK
+      # CHECK BOT HEALTH
       #########################################
       - name: 🏥 Health Check
         run: |
           ssh -o StrictHostKeyChecking=yes ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            cd /home/${{ secrets.SERVER_USER }}/app/bot-plattform
+            cd ~/app/bot-plattform
             
-            # Wait for containers to start
-            sleep 5
-            
-            # Check container status
-            TWITCH_RUNNING=$(docker compose ps twitch-bot --format json 2>/dev/null | grep -c '"State":"running"' || echo "0")
-            DISCORD_RUNNING=$(docker compose ps discord-bot --format json 2>/dev/null | grep -c '"State":"running"' || echo "0")
+            # Check if containers are running
+            TWITCH_STATUS=$(docker compose ps twitch-bot --format json | jq -r '.State' 2>/dev/null || echo "unknown")
+            DISCORD_STATUS=$(docker compose ps discord-bot --format json | jq -r '.State' 2>/dev/null || echo "unknown")
             
             echo "🏥 Health Status:"
-            echo "  Twitch Bot:  $([ "$TWITCH_RUNNING" = "1" ] && echo "✅ Running" || echo "❌ Not Running")"
-            echo "  Discord Bot: $([ "$DISCORD_RUNNING" = "1" ] && echo "✅ Running" || echo "❌ Not Running")"
+            echo "  Twitch Bot:  $TWITCH_STATUS"
+            echo "  Discord Bot: $DISCORD_STATUS"
             
-            # Only fail if .env is properly configured
-            if [ -f docker/.env ] && grep -q "REPLACE_ME" docker/.env; then
-              echo ""
-              echo "⚠️  .env file contains placeholder values!"
-              echo "   Edit docker/.env with real values, then restart:"
-              echo "   cd /home/${{ secrets.SERVER_USER }}/app/bot-plattform"
-              echo "   docker compose up -d"
-              exit 0  # Don't fail deployment, just warn
-            fi
-            
-            # Fail if containers are not running and .env is configured
-            if [ "$TWITCH_RUNNING" != "1" ] || [ "$DISCORD_RUNNING" != "1" ]; then
-              echo ""
-              echo "❌ One or more containers failed to start!"
-              echo "   Check logs above for errors."
+            # Exit with error if any bot is not running
+            if [ "$TWITCH_STATUS" != "running" ]; then
+              echo "❌ Twitch Bot is not running!"
               exit 1
             fi
             
-            echo ""
+            if [ "$DISCORD_STATUS" != "running" ]; then
+              echo "❌ Discord Bot is not running!"
+              exit 1
+            fi
+            
             echo "✅ All bots are healthy!"
           EOF
 
@@ -171,23 +176,26 @@ jobs:
       # DEPLOYMENT SUMMARY
       #########################################
       - name: 🎉 Deployment Summary
-        if: always()
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ BOT PLATFORM DEPLOYMENT COMPLETED"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "📦 Version: ${{ github.ref_name }}"
+          echo "📦 Deployed Version: ${{ github.ref_name }}"
           echo "📝 Commit: ${{ github.sha }}"
-          echo "📂 Location: /home/${{ secrets.SERVER_USER }}/app/bot-plattform/"
+          echo "📂 Location: ~/app/bot-plattform/"
           echo ""
           echo "🤖 Bots Deployed:"
           echo "  ✅ Twitch Bot  (services/twitch-bot/)"
           echo "  ✅ Discord Bot (services/discord-bot/)"
           echo ""
-          echo "📋 Next Steps:"
-          echo "  1. SSH to server"
-          echo "  2. Edit docker/.env with real credentials"
-          echo "  3. Restart bots: docker compose up -d"
+          echo "🔍 Quick Commands:"
+          echo "  • Status:  docker compose ps"
+          echo "  • Logs:    docker compose logs -f"
+          echo "  • Restart: docker compose restart"
+          echo ""
+          echo "📊 Check Logs:"
+          echo "  • Twitch:  docker compose logs twitch-bot -f"
+          echo "  • Discord: docker compose logs discord-bot -f"
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
