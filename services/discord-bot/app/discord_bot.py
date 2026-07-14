@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from listeners.redis_listener import RedisListener
+from senders.redis_sender import RedisSender
 from events.guild_events import setup_guild_events
 from events.voice_events import setup_voice_events
 
@@ -33,6 +34,7 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 
 redis_listener = None
+redis_sender = None
 
 
 @bot.event
@@ -41,7 +43,7 @@ async def on_ready():
     logger.info(f"✅ Connected to {len(bot.guilds)} guilds")
 
     # Start Redis listener
-    global redis_listener
+    global redis_listener, redis_sender
     redis_listener = RedisListener(
         bot=bot,
         host=REDIS_HOST,
@@ -53,12 +55,23 @@ async def on_ready():
     asyncio.create_task(redis_listener.start())
     logger.info("✅ Redis listener started")
 
+    # Start heartbeat sender (lets other services know the bot is online)
+    redis_sender = RedisSender(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        db=REDIS_DB
+    )
+    await redis_sender.start(bot)
+
 
 @bot.event
 async def on_close():
     logger.info("Bot shutting down...")
     if redis_listener:
         await redis_listener.stop()
+    if redis_sender:
+        await redis_sender.stop()
 
 
 setup_guild_events(bot)
