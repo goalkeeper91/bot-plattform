@@ -184,12 +184,33 @@ class RedisListener:
             logger.error(f"Failed to leave guild: {e}")
 
     async def reload_configs(self, data):
-        """Reload Join-to-Create configs"""
+        """Applies a config push from the backend (see discord_bot/redis_bridge.py's
+        publish_guild_config() in the PunishersGer repo - that's the source of
+        truth, this bot only caches what it's told). Two config_types:
+
+        - join_to_create: full replace of this guild's voice-channel triggers
+          (see events/voice_events.py, which already implements the actual
+          create/delete-on-empty logic - this just feeds it config).
+        - rule_role: the reaction-role used for rule acceptance (see
+          events/rule_role_events.py). An empty/missing 'config' disables it.
+        """
         try:
             guild_id = int(data['guild_id'])
             config_type = data.get('config_type', 'join_to_create')
 
-            logger.info(f"✅ Reloaded {config_type} configs for guild {guild_id}")
+            if config_type == 'join_to_create':
+                from events.voice_events import load_jtc_config, jtc_configs
+                jtc_configs[guild_id] = {}
+                for trigger in data.get('triggers', []):
+                    load_jtc_config(guild_id, int(trigger['channel_id']), trigger)
+                logger.info(f"✅ {len(data.get('triggers', []))} Join-to-Create Trigger geladen für Guild {guild_id}")
+
+            elif config_type == 'rule_role':
+                from events.rule_role_events import set_rule_role_config
+                set_rule_role_config(guild_id, data.get('config'))
+
+            else:
+                logger.warning(f"⚠️ Unbekannter config_type: {config_type}")
 
         except Exception as e:
             logger.error(f"Failed to reload configs: {e}")
