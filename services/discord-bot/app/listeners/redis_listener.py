@@ -202,7 +202,14 @@ class RedisListener:
                 from events.voice_events import load_jtc_config, jtc_configs
                 jtc_configs[guild_id] = {}
                 for trigger in data.get('triggers', []):
-                    load_jtc_config(guild_id, int(trigger['channel_id']), trigger)
+                    # category_id arrives as a JSON string (PunishersGer stores
+                    # Discord snowflake IDs as strings) - guild.get_channel()
+                    # in voice_events.py's handle_voice_join() looks up by int,
+                    # so a string here would silently never match and log
+                    # "Category ... not found" even with a correct ID.
+                    channel_id = int(trigger['channel_id'])
+                    normalized = {**trigger, 'category_id': int(trigger['category_id'])}
+                    load_jtc_config(guild_id, channel_id, normalized)
                 logger.info(f"✅ {len(data.get('triggers', []))} Join-to-Create Trigger geladen für Guild {guild_id}")
 
             elif config_type == 'rule_role':
