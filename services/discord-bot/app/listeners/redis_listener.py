@@ -191,8 +191,10 @@ class RedisListener:
         - join_to_create: full replace of this guild's voice-channel triggers
           (see events/voice_events.py, which already implements the actual
           create/delete-on-empty logic - this just feeds it config).
-        - rule_role: the reaction-role used for rule acceptance (see
-          events/rule_role_events.py). An empty/missing 'config' disables it.
+        - reaction_roles: full replace of this guild's message+emoji->role
+          mappings, covering both rule acceptance and self-assignable
+          community roles (see events/reaction_role_events.py). An empty
+          list clears all reaction-roles for the guild.
         """
         try:
             guild_id = int(data['guild_id'])
@@ -212,9 +214,9 @@ class RedisListener:
                     load_jtc_config(guild_id, channel_id, normalized)
                 logger.info(f"✅ {len(data.get('triggers', []))} Join-to-Create Trigger geladen für Guild {guild_id}")
 
-            elif config_type == 'rule_role':
-                from events.rule_role_events import set_rule_role_config
-                set_rule_role_config(guild_id, data.get('config'))
+            elif config_type == 'reaction_roles':
+                from events.reaction_role_events import set_reaction_roles
+                set_reaction_roles(guild_id, data.get('roles', []))
 
             else:
                 logger.warning(f"⚠️ Unbekannter config_type: {config_type}")

@@ -9,7 +9,7 @@ from listeners.redis_listener import RedisListener
 from senders.redis_sender import RedisSender
 from events.guild_events import setup_guild_events
 from events.voice_events import setup_voice_events
-from events.rule_role_events import setup_rule_role_events
+from events.reaction_role_events import setup_reaction_role_events
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,7 +77,7 @@ async def on_close():
 
 setup_guild_events(bot)
 setup_voice_events(bot)
-setup_rule_role_events(bot)
+setup_reaction_role_events(bot)
 
 
 def main():
