@@ -27,9 +27,25 @@ def set_reaction_roles(guild_id, roles):
     logger.info(f"✅ {len(reaction_role_configs[guild_id])} Reaction-Role(s) geladen für Guild {guild_id}")
 
 
-def _find_matching_config(guild_id, channel_id, message_id, emoji):
+def _emoji_matches(payload_emoji, configured_emoji: str) -> bool:
+    """Unicode emoji (the common case, e.g. "✅") are matched by their
+    literal character via str(payload_emoji), unchanged from before. Custom
+    server emojis are hard to type correctly as <:name:id> by hand (exact
+    name, animated "a:" prefix) and the name can change if someone renames
+    the emoji later, so also accept just the numeric emoji ID here (visible
+    via Discord's right-click "ID kopieren" on the emoji, or by typing
+    \\:emojiname: in a message) and match on payload_emoji.id instead."""
+    configured_emoji = configured_emoji.strip()
+    if configured_emoji.isdigit() and payload_emoji.id is not None:
+        return str(payload_emoji.id) == configured_emoji
+    return str(payload_emoji) == configured_emoji
+
+
+def _find_matching_config(guild_id, channel_id, message_id, payload_emoji):
     for config in reaction_role_configs.get(guild_id, []):
-        if config["channel_id"] == channel_id and config["message_id"] == message_id and config["emoji"] == emoji:
+        if config["channel_id"] != channel_id or config["message_id"] != message_id:
+            continue
+        if _emoji_matches(payload_emoji, config["emoji"]):
             return config
     return None
 
@@ -51,7 +67,7 @@ def setup_reaction_role_events(bot):
         if payload.member is None or payload.member.bot:
             return
 
-        config = _find_matching_config(payload.guild_id, payload.channel_id, payload.message_id, str(payload.emoji))
+        config = _find_matching_config(payload.guild_id, payload.channel_id, payload.message_id, payload.emoji)
         if not config:
             return
 
@@ -80,7 +96,7 @@ def setup_reaction_role_events(bot):
         # Discord Developer Portal's Privileged Gateway Intents, since that
         # can't be verified from code), falling back to an API fetch for a
         # member who isn't cached.
-        config = _find_matching_config(payload.guild_id, payload.channel_id, payload.message_id, str(payload.emoji))
+        config = _find_matching_config(payload.guild_id, payload.channel_id, payload.message_id, payload.emoji)
         if not config or not config["removable"]:
             return
 
