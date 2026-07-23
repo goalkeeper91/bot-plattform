@@ -165,9 +165,13 @@ class RedisListener:
                 logger.error(f"Guild {guild_id} not found")
                 return
 
+            # IDs go out as strings - the Go side's domain.DiscordChannel/
+            # DiscordRole use a `,string` json tag (same fix applied to every
+            # Discord snowflake crossing into the frontend, since JS mangles
+            # large integers), so an unquoted number here fails to unmarshal.
             channels = [
                 {
-                    "id": channel.id,
+                    "id": str(channel.id),
                     "name": channel.name,
                     "type": "text",
                     "position": channel.position,
@@ -177,7 +181,7 @@ class RedisListener:
 
             roles = [
                 {
-                    "id": role.id,
+                    "id": str(role.id),
                     "name": role.name,
                     "color": role.color.value,
                     "position": role.position,
