@@ -56,6 +56,32 @@ class HelixClient:
                     raise HelixInsufficientScopeError(await response.text())
                 response.raise_for_status()
 
+    async def _delete(self, path: str, token: str, params: dict) -> None:
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(
+                    f"{HELIX_BASE}{path}",
+                    headers=self._headers(token),
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=8),
+            ) as response:
+                if response.status == 401:
+                    raise HelixInsufficientScopeError(await response.text())
+                response.raise_for_status()
+
+    async def _post(self, path: str, token: str, params: dict, json_body: dict) -> dict:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                    f"{HELIX_BASE}{path}",
+                    headers=self._headers(token),
+                    params=params,
+                    json=json_body,
+                    timeout=aiohttp.ClientTimeout(total=8),
+            ) as response:
+                if response.status == 401:
+                    raise HelixInsufficientScopeError(await response.text())
+                response.raise_for_status()
+                return await response.json()
+
     async def get_streams(self, user_id: str, token: str) -> dict | None:
         data = await self._get("/streams", token, params={"user_id": user_id})
         items = data.get("data", [])
@@ -94,3 +120,25 @@ class HelixClient:
         )
         items = data.get("data", [])
         return items[0] if items else None
+
+    async def delete_message(self, broadcaster_id: str, moderator_id: str, message_id: str, token: str) -> None:
+        """Automod message removal. moderator_id is always broadcaster_id in
+        our case - the bot self-moderates using the broadcaster's own token
+        rather than needing a separate moderator account."""
+        await self._delete(
+            "/moderation/chat",
+            token,
+            params={"broadcaster_id": broadcaster_id, "moderator_id": moderator_id, "message_id": message_id},
+        )
+
+    async def timeout_user(
+            self, broadcaster_id: str, moderator_id: str, user_id: str, duration_seconds: int, reason: str, token: str
+    ) -> None:
+        """Automod escalating timeout (never a permanent ban - duration is
+        always set)."""
+        await self._post(
+            "/moderation/bans",
+            token,
+            params={"broadcaster_id": broadcaster_id, "moderator_id": moderator_id},
+            json_body={"data": {"user_id": user_id, "duration": duration_seconds, "reason": reason[:500]}},
+        )

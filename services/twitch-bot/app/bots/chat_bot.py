@@ -31,6 +31,7 @@ class EventSubChatDebugBot(commands.Bot):
         # Helix on their behalf, since _token_owner only maps the other way.
         self.broadcaster_tokens: dict[str, str] = {}
         self.custom_commands = None
+        self.automod = None
         self.start_time = datetime.now(timezone.utc)
         self._is_running = False  # ✅ Initial False
         self._bot_token_loaded = False # ✅ Track if bot token was successfully loaded
@@ -73,6 +74,11 @@ class EventSubChatDebugBot(commands.Bot):
         from app.commands.custom_commands import CustomCommands
         from app.commands.vote_commands import VoteCommands
         from app.commands.builtin_commands import BuiltinCommands
+        from app.moderation.automod import AutomodFilter
+
+        self.automod = AutomodFilter(self)
+        await self.automod.reload_settings()
+        LOGGER.info("✅ Automod-Filter initialisiert")
 
         self.custom_commands = CustomCommands(self)
         await self.add_component(self.custom_commands)
@@ -237,6 +243,12 @@ class EventSubChatDebugBot(commands.Bot):
                 channel_id=message.broadcaster.id
             )
 
+        # Automod läuft VOR jeder Command-Verarbeitung - ein Verstoß löscht
+        # die Nachricht und beendet die Bearbeitung hier, ein zufällig
+        # command-artiger Blockwort-Text wird also nicht mehr weiterverarbeitet.
+        if self.automod and await self.automod.check_message(message):
+            return
+
         if self.custom_commands:
             await self.custom_commands.handle_message(message)
 
@@ -353,6 +365,18 @@ class EventSubChatDebugBot(commands.Bot):
                 LOGGER.error("❌ CustomCommands hat keine reload_commands Methode!")
         except Exception as e:
             LOGGER.error("❌ Fehler beim Reload: %s", e, exc_info=True)
+
+    async def reload_automod(self, twitch_user_id: str = None):
+        LOGGER.info("🔄 Reloading Automod-Settings für user_id=%s", twitch_user_id or "ALL")
+
+        if not self.automod:
+            LOGGER.error("❌ Automod-Filter nicht initialisiert!")
+            return
+
+        try:
+            await self.automod.reload_settings(twitch_user_id)
+        except Exception as e:
+            LOGGER.error("❌ Fehler beim Automod-Reload: %s", e, exc_info=True)
 
     async def start_bot(self):
         if self._is_running:
