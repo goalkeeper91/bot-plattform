@@ -26,6 +26,10 @@ class EventSubChatDebugBot(commands.Bot):
         self.twitch_config = twitch_config
         self._subscribed_channels: set[str] = set()
         self._token_owner: dict[str, str] = {}
+        # {twitch_user_id: access_token} - lets built-in commands (!title,
+        # !game, !followage, ...) look up a broadcaster's own token to call
+        # Helix on their behalf, since _token_owner only maps the other way.
+        self.broadcaster_tokens: dict[str, str] = {}
         self.custom_commands = None
         self.start_time = datetime.now(timezone.utc)
         self._is_running = False  # ✅ Initial False
@@ -68,6 +72,7 @@ class EventSubChatDebugBot(commands.Bot):
 
         from app.commands.custom_commands import CustomCommands
         from app.commands.vote_commands import VoteCommands
+        from app.commands.builtin_commands import BuiltinCommands
 
         self.custom_commands = CustomCommands(self)
         await self.add_component(self.custom_commands)
@@ -76,6 +81,9 @@ class EventSubChatDebugBot(commands.Bot):
 
         await self.add_component(VoteCommands(self))
         LOGGER.info("✅ Vote Commands Component geladen")
+
+        await self.add_component(BuiltinCommands(self))
+        LOGGER.info("✅ Built-in Commands Component geladen (!uptime, !title, !game, !followage, !shoutout)")
 
         self.announcer = BotAnnouncer(self)
         LOGGER.info("✅ Bot Announcer initialisiert")
@@ -121,7 +129,8 @@ class EventSubChatDebugBot(commands.Bot):
             try:
                 await self.add_token(access, refresh)
                 self._token_owner[access] = user_id
-                
+                self.broadcaster_tokens[user_id] = access
+
                 if is_bot:
                     # Check if this matches our config bot_id
                     if user_id == str(self.twitch_config.bot_id):
@@ -252,6 +261,7 @@ class EventSubChatDebugBot(commands.Bot):
                                user_id)
 
         self._token_owner[payload.token] = user_id
+        self.broadcaster_tokens[user_id] = payload.token
 
     async def event_eventsub_subscription_allowed(self, payload):
         LOGGER.info(
@@ -281,6 +291,7 @@ class EventSubChatDebugBot(commands.Bot):
             return
 
         self._token_owner[payload.access_token] = payload.user_id
+        self.broadcaster_tokens[payload.user_id] = payload.access_token
         self._subscribed_channels.add(payload.user_id)
 
         chat = eventsub.ChatMessageSubscription(
@@ -311,6 +322,7 @@ class EventSubChatDebugBot(commands.Bot):
         refresh = self.crypto.decrypt(row["refresh_token"])
 
         await self.add_token(access, refresh)
+        self.broadcaster_tokens[str(twitch_user_id)] = access
 
         if twitch_user_id in self._subscribed_channels:
             LOGGER.info("ℹ️ Channel %s bereits subscribed (Redis)", twitch_user_id)
