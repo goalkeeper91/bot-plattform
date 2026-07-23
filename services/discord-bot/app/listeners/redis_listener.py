@@ -151,7 +151,12 @@ class RedisListener:
             logger.error(f"Failed to send admin notification: {e}")
 
     async def sync_guild(self, data):
-        """Sync guild data with backend"""
+        """Report a guild's current channels/roles back to the backend.
+
+        The backend (DiscordGuildService.requestGuildDataFromBot in the
+        WebsiteJava repo) publishes SYNC_GUILD then polls this Redis key for
+        up to 3s, so the write below must land well within that window.
+        """
         try:
             guild_id = int(data['guild_id'])
             guild = self.bot.get_guild(guild_id)
@@ -160,9 +165,39 @@ class RedisListener:
                 logger.error(f"Guild {guild_id} not found")
                 return
 
-            # Sync guild data (channels, roles, etc.)
-            # This would send data back to backend via Redis
-            logger.info(f"✅ Synced guild {guild.name} ({guild_id})")
+            channels = [
+                {
+                    "id": channel.id,
+                    "name": channel.name,
+                    "type": "text",
+                    "position": channel.position,
+                }
+                for channel in guild.text_channels
+            ]
+
+            roles = [
+                {
+                    "id": role.id,
+                    "name": role.name,
+                    "color": role.color.value,
+                    "position": role.position,
+                    "permissions": role.permissions.value,
+                }
+                for role in guild.roles
+                if not role.is_default()
+            ]
+
+            key = f"discord_guild_data:{guild_id}"
+            await self.redis_client.set(
+                key,
+                json.dumps({"channels": channels, "roles": roles}),
+                ex=30,
+            )
+
+            logger.info(
+                f"✅ Synced guild {guild.name} ({guild_id}): "
+                f"{len(channels)} channels, {len(roles)} roles"
+            )
 
         except Exception as e:
             logger.error(f"Failed to sync guild: {e}")
