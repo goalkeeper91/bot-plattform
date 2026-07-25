@@ -32,6 +32,7 @@ class EventSubChatDebugBot(commands.Bot):
         self.broadcaster_tokens: dict[str, str] = {}
         self.custom_commands = None
         self.automod = None
+        self.giveaway_commands = None
         self.start_time = datetime.now(timezone.utc)
         self._is_running = False  # ✅ Initial False
         self._bot_token_loaded = False # ✅ Track if bot token was successfully loaded
@@ -93,8 +94,10 @@ class EventSubChatDebugBot(commands.Bot):
         await self.add_component(BuiltinCommands(self))
         LOGGER.info("✅ Built-in Commands Component geladen (!uptime, !title, !game, !followage, !shoutout)")
 
-        await self.add_component(GiveawayCommands(self))
-        LOGGER.info("✅ Giveaway Commands Component geladen (!giveaway start/enter/draw/status)")
+        self.giveaway_commands = GiveawayCommands(self)
+        await self.giveaway_commands.reload_open_giveaways()
+        await self.add_component(self.giveaway_commands)
+        LOGGER.info("✅ Giveaway Commands Component geladen (!giveaway start/draw/status, Teilnahme per Codewort)")
 
         self.announcer = BotAnnouncer(self)
         LOGGER.info("✅ Bot Announcer initialisiert")
@@ -253,6 +256,13 @@ class EventSubChatDebugBot(commands.Bot):
         # command-artiger Blockwort-Text wird also nicht mehr weiterverarbeitet.
         if self.automod and await self.automod.check_message(message):
             return
+
+        # Giveaway-Teilnahme ist kein !-Befehl, sondern ein reines Codewort -
+        # muss also gegen JEDE Nachricht geprüft werden, nicht nur die mit
+        # !-Präfix. Blockiert nichts Weiteres (ein bares Codewort hätte
+        # ohnehin keinen Effekt auf process_commands/custom_commands).
+        if self.giveaway_commands:
+            await self.giveaway_commands.check_message(message)
 
         if self.custom_commands:
             await self.custom_commands.handle_message(message)
