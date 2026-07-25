@@ -393,6 +393,22 @@ class EventSubChatDebugBot(commands.Bot):
         except Exception as e:
             LOGGER.error("❌ Fehler beim Automod-Reload: %s", e, exc_info=True)
 
+    async def refresh_giveaway(self, twitch_user_id: str = None):
+        LOGGER.info("🔄 Reloading Giveaway-Codewort für user_id=%s", twitch_user_id or "ALL")
+
+        if not self.giveaway_commands:
+            LOGGER.error("❌ GiveawayCommands nicht initialisiert!")
+            return
+
+        if not twitch_user_id:
+            LOGGER.warning("⚠️ REFRESH_GIVEAWAY ohne twitch_user_id - kein globaler Reload vorgesehen")
+            return
+
+        try:
+            await self.giveaway_commands.refresh_single(twitch_user_id)
+        except Exception as e:
+            LOGGER.error("❌ Fehler beim Giveaway-Reload: %s", e, exc_info=True)
+
     async def start_bot(self):
         if self._is_running:
             LOGGER.info("⚠️ Bot läuft bereits.")

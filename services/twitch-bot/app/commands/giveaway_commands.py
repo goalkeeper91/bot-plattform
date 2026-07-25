@@ -110,6 +110,23 @@ class GiveawayCommands(commands.Component):
         }
         LOGGER.info("✅ Giveaway-Codewörter geladen für %d Kanal/Kanäle", len(self.open_giveaways))
 
+    async def refresh_single(self, broadcaster_id: str):
+        """Aktualisiert den Cache-Eintrag für EINEN Kanal - ausgelöst durch
+        das REFRESH_GIVEAWAY-Redis-Signal, das jetzt sowohl von Chat-Commands
+        als auch vom Dashboard gesendet wird (Giveaways Teil 3 macht das
+        Dashboard zu einem zweiten Writer). Nutzt den bereits bestehenden
+        /api/bot/giveaways/status-Endpoint, kein neuer Go-Endpoint nötig."""
+        status, data = await self._get("/api/bot/giveaways/status", {"broadcaster_id": broadcaster_id})
+        if status != 200 or data is None:
+            LOGGER.warning("⚠️ Konnte Giveaway-Status für %s nicht aktualisieren (status=%s)", broadcaster_id, status)
+            return
+
+        giveaway = data.get("giveaway")
+        if giveaway:
+            self.open_giveaways[broadcaster_id] = giveaway["keyword"].lower()
+        else:
+            self.open_giveaways.pop(broadcaster_id, None)
+
     async def check_message(self, message) -> bool:
         """Prüft JEDE Chat-Nachricht gegen das offene Codewort des Kanals -
         kein !-Präfix, exaktes Match (Groß-/Kleinschreibung wird ignoriert).

@@ -117,6 +117,9 @@ class RedisHandler:
         elif event == "REFRESH_AUTOMOD":
             await self.bot.reload_automod(twitch_id)
 
+        elif event == "REFRESH_GIVEAWAY":
+            await self.bot.refresh_giveaway(twitch_id)
+
         elif event == "STOP_BOT":
             LOGGER.info("🛑 Stop-Befehl erhalten. Trenne von Twitch...")
             await self.bot.stop_bot()
