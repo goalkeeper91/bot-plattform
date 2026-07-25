@@ -333,3 +333,24 @@ class BuiltinCommands(commands.Component):
             for i, entry in enumerate(entries, start=1)
         )
         await ctx.send(f"🏆 Top {data['points_name']}: {ranking}")
+
+    @commands.command(name="regulars")
+    async def regulars(self, ctx: commands.Context):
+        broadcaster_id = str(ctx.channel.id)
+        if self._on_cooldown(broadcaster_id, "regulars"):
+            return
+
+        data = await self._loyalty_get(
+            "/api/bot/loyalty/regulars",
+            {"broadcaster_id": broadcaster_id},
+        )
+        if data is None:
+            await ctx.send("❌ Konnte die Regulars nicht abrufen.")
+            return
+
+        logins = data.get("logins") or []
+        if not logins:
+            await ctx.send("Noch keine Regulars.")
+            return
+
+        await ctx.send(f"⭐ Regulars: {', '.join(logins)}")

@@ -2,13 +2,18 @@
 Automod: deletes chat messages containing blocked words/phrases, disallowed
 links, or generic spam patterns (excessive caps/symbols/emotes, repeated
 messages), and issues an escalating timeout on the sender. Mods/broadcaster
-are always exempt, plus optionally VIPs and a manually-curated trusted-user
-list (standing in for real watchtime-based "Regulars", which don't exist
-yet). Settings are cached in memory per channel (see reload_settings) so the
-actual per-message check never does I/O - only an actual violation (rare)
-triggers Helix calls + a small Go-backend call for the escalation counter
-and violation log.
+are always exempt, plus optionally VIPs, a manually-curated trusted-user
+list, and - since Loyalty/Watchtime - viewers who've crossed the channel's
+Regulars points threshold. The Go backend merges Regulars into exempt_users
+at response time (see GetAllEnabledSettingsForBot), so this file's exemption
+check never changed - only reload_settings needed a periodic timer (see
+start/stop below) so a newly-crossed threshold doesn't sit stale until the
+streamer happens to touch Automod's own settings. Settings are cached in
+memory per channel (see reload_settings) so the actual per-message check
+never does I/O - only an actual violation (rare) triggers Helix calls + a
+small Go-backend call for the escalation counter and violation log.
 """
+import asyncio
 import logging
 import os
 import re
@@ -35,6 +40,12 @@ SYMBOL_MIN_RATIO = 0.5
 DEFAULT_EMOTE_THRESHOLD = 6
 REPETITION_MIN_COUNT = 3
 REPETITION_WINDOW_SECONDS = 30
+
+# How often settings are re-polled even without a REFRESH_AUTOMOD signal -
+# needed because Regulars status can change (a viewer crosses the Loyalty
+# points threshold) independently of the streamer ever touching Automod's
+# own settings.
+RELOAD_INTERVAL_SECONDS = 300
 
 # Recognizes explicit http(s)/www links anywhere, or a bare "word.tld" where
 # tld is a common one - a full precise URL grammar is out of scope for v1
@@ -75,6 +86,33 @@ class AutomodFilter:
         # In-memory only - a repetition streak is inherently short-lived,
         # unlike the durable escalation counter kept in Postgres.
         self.recent_messages: dict[str, list[tuple[float, str]]] = {}
+        self._reload_task = None
+
+    async def start(self):
+        """Startet den periodischen Settings-Reload (siehe RELOAD_INTERVAL_SECONDS)."""
+        if not self._reload_task:
+            self._reload_task = asyncio.create_task(self._reload_loop())
+            LOGGER.info("✅ Automod periodischer Reload gestartet")
+
+    async def stop(self):
+        """Stoppt den periodischen Settings-Reload."""
+        if self._reload_task:
+            self._reload_task.cancel()
+            try:
+                await self._reload_task
+            except asyncio.CancelledError:
+                pass
+            LOGGER.info("🛑 Automod periodischer Reload gestoppt")
+
+    async def _reload_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(RELOAD_INTERVAL_SECONDS)
+                await self.reload_settings()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                LOGGER.error("❌ Periodischer Automod-Reload fehlgeschlagen: %s", e, exc_info=True)
 
     async def reload_settings(self, twitch_user_id: str | None = None):
         """Refetches ALL enabled channels' settings from the Go backend and

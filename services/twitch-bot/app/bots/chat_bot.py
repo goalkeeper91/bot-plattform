@@ -78,6 +78,7 @@ class EventSubChatDebugBot(commands.Bot):
 
         self.automod = AutomodFilter(self)
         await self.automod.reload_settings()
+        await self.automod.start()
         LOGGER.info("✅ Automod-Filter initialisiert")
 
         self.custom_commands = CustomCommands(self)
@@ -436,6 +437,9 @@ class EventSubChatDebugBot(commands.Bot):
 
         if self.status_sender:
             await self.status_sender.stop_heartbeat()
+
+        if self.automod:
+            await self.automod.stop()
 
         if self.redis_handler:
             await self.redis_handler.stop()
