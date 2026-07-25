@@ -74,6 +74,7 @@ class EventSubChatDebugBot(commands.Bot):
         from app.commands.custom_commands import CustomCommands
         from app.commands.vote_commands import VoteCommands
         from app.commands.builtin_commands import BuiltinCommands
+        from app.commands.giveaway_commands import GiveawayCommands
         from app.moderation.automod import AutomodFilter
 
         self.automod = AutomodFilter(self)
@@ -91,6 +92,9 @@ class EventSubChatDebugBot(commands.Bot):
 
         await self.add_component(BuiltinCommands(self))
         LOGGER.info("✅ Built-in Commands Component geladen (!uptime, !title, !game, !followage, !shoutout)")
+
+        await self.add_component(GiveawayCommands(self))
+        LOGGER.info("✅ Giveaway Commands Component geladen (!giveaway start/enter/draw/status)")
 
         self.announcer = BotAnnouncer(self)
         LOGGER.info("✅ Bot Announcer initialisiert")
