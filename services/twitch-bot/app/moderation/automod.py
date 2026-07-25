@@ -1,13 +1,18 @@
 """
-Automod: deletes chat messages containing blocked words/phrases or
-disallowed links, and issues an escalating timeout on the sender. Settings
-are cached in memory per channel (see reload_settings) so the actual
-per-message check never does I/O - only an actual violation (rare) triggers
-Helix calls + a small Go-backend call for the escalation counter.
+Automod: deletes chat messages containing blocked words/phrases, disallowed
+links, or generic spam patterns (excessive caps/symbols/emotes, repeated
+messages), and issues an escalating timeout on the sender. Mods/broadcaster
+are always exempt, plus optionally VIPs and a manually-curated trusted-user
+list (standing in for real watchtime-based "Regulars", which don't exist
+yet). Settings are cached in memory per channel (see reload_settings) so the
+actual per-message check never does I/O - only an actual violation (rare)
+triggers Helix calls + a small Go-backend call for the escalation counter
+and violation log.
 """
 import logging
 import os
 import re
+import time
 
 import aiohttp
 
@@ -16,6 +21,20 @@ from app.utils.helix_client import HelixClient, HelixInsufficientScopeError
 LOGGER = logging.getLogger("AutomodFilter")
 
 BACKEND_BASE_URL = "http://backend-go:8080"
+
+# Fixed thresholds for the generic spam filters - not configurable in v1
+# (same simplification as the escalation tiers). The emote count is the one
+# exception: emote spam in the right moment (an esports highlight, a hype
+# train) can be a legitimate reaction rather than spam, so streamers set
+# their own threshold per channel (automod_settings.emote_threshold) - this
+# is only the fallback if a cached settings row somehow lacks the field.
+CAPS_MIN_LENGTH = 10
+CAPS_MIN_RATIO = 0.7
+SYMBOL_MIN_LENGTH = 6
+SYMBOL_MIN_RATIO = 0.5
+DEFAULT_EMOTE_THRESHOLD = 6
+REPETITION_MIN_COUNT = 3
+REPETITION_WINDOW_SECONDS = 30
 
 # Recognizes explicit http(s)/www links anywhere, or a bare "word.tld" where
 # tld is a common one - a full precise URL grammar is out of scope for v1
@@ -29,6 +48,7 @@ _LINK_PATTERN = re.compile(
     r"\b((?:https?://)?(?:www\.)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+([a-zA-Z]{2,}))\b",
     re.IGNORECASE,
 )
+_ALNUM_PATTERN = re.compile(r"[^\w\s]", re.UNICODE)
 
 
 def _extract_link_domains(text: str) -> list[str]:
@@ -51,6 +71,10 @@ class AutomodFilter:
         self.internal_secret = os.environ.get("BOT_INTERNAL_SECRET", "")
         # {broadcaster_twitch_id: settings-dict from GET /api/bot/automod-settings}
         self.settings_cache: dict[str, dict] = {}
+        # {f"{channel_id}:{chatter_id}": [(timestamp, normalized_text), ...]}
+        # In-memory only - a repetition streak is inherently short-lived,
+        # unlike the durable escalation counter kept in Postgres.
+        self.recent_messages: dict[str, list[tuple[float, str]]] = {}
 
     async def reload_settings(self, twitch_user_id: str | None = None):
         """Refetches ALL enabled channels' settings from the Go backend and
@@ -93,7 +117,14 @@ class AutomodFilter:
         if not settings or not settings.get("enabled"):
             return False
 
-        reason = self._find_violation(message.text, settings)
+        if settings.get("exempt_vips") and getattr(message.chatter, "vip", False):
+            return False
+
+        exempt_users = {u.lower() for u in (settings.get("exempt_users") or [])}
+        if message.chatter.name.lower() in exempt_users:
+            return False
+
+        reason = self._find_violation(message, settings)
         if reason is None:
             return False
 
@@ -110,7 +141,9 @@ class AutomodFilter:
             LOGGER.error("❌ Automod: Fehler beim Löschen der Nachricht: %s", e)
 
         offender_id = str(message.chatter.id)
-        timeout_seconds = await self._record_violation(broadcaster_id, offender_id)
+        timeout_seconds = await self._record_violation(
+            broadcaster_id, offender_id, message.chatter.name, reason, message.text[:300]
+        )
 
         try:
             await self.helix.timeout_user(
@@ -127,8 +160,8 @@ class AutomodFilter:
         )
         return True
 
-    @staticmethod
-    def _find_violation(text: str, settings: dict) -> str | None:
+    def _find_violation(self, message, settings: dict) -> str | None:
+        text = message.text
         lowered = text.lower()
 
         for word in settings.get("blocked_words") or []:
@@ -141,9 +174,55 @@ class AutomodFilter:
                 if domain not in allowed:
                     return f"disallowed link: {domain}"
 
+        if settings.get("caps_filter_enabled") and self._is_caps_spam(text):
+            return "excessive caps"
+
+        if settings.get("symbol_filter_enabled") and self._is_symbol_spam(text):
+            return "excessive symbols"
+
+        if settings.get("emote_filter_enabled"):
+            threshold = settings.get("emote_threshold") or DEFAULT_EMOTE_THRESHOLD
+            if len(getattr(message, "emotes", []) or []) > threshold:
+                return "emote spam"
+
+        if settings.get("repetition_filter_enabled") and self._is_repetition(message):
+            return "message repetition"
+
         return None
 
-    async def _record_violation(self, broadcaster_id: str, offender_id: str) -> int:
+    @staticmethod
+    def _is_caps_spam(text: str) -> bool:
+        letters = [c for c in text if c.isalpha()]
+        if len(text) < CAPS_MIN_LENGTH or len(letters) < CAPS_MIN_LENGTH:
+            return False
+        upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
+        return upper_ratio >= CAPS_MIN_RATIO
+
+    @staticmethod
+    def _is_symbol_spam(text: str) -> bool:
+        if len(text) < SYMBOL_MIN_LENGTH:
+            return False
+        symbol_count = len(_ALNUM_PATTERN.findall(text))
+        return (symbol_count / len(text)) >= SYMBOL_MIN_RATIO
+
+    def _is_repetition(self, message) -> bool:
+        key = f"{message.broadcaster.id}:{message.chatter.id}"
+        normalized = message.text.strip().lower()
+        now = time.monotonic()
+
+        history = [
+            (ts, txt) for ts, txt in self.recent_messages.get(key, [])
+            if now - ts <= REPETITION_WINDOW_SECONDS
+        ]
+        history.append((now, normalized))
+        self.recent_messages[key] = history
+
+        matching = sum(1 for _, txt in history if txt == normalized)
+        return matching >= REPETITION_MIN_COUNT
+
+    async def _record_violation(
+            self, broadcaster_id: str, offender_id: str, offender_name: str, reason: str, message_excerpt: str
+    ) -> int:
         default_timeout = 10
         if not self.internal_secret:
             return default_timeout
@@ -153,7 +232,13 @@ class AutomodFilter:
                 async with session.post(
                         f"{BACKEND_BASE_URL}/api/bot/automod-violation",
                         headers={"X-Bot-Secret": self.internal_secret},
-                        json={"broadcaster_twitch_id": broadcaster_id, "offender_twitch_id": offender_id},
+                        json={
+                            "broadcaster_twitch_id": broadcaster_id,
+                            "offender_twitch_id": offender_id,
+                            "offender_name": offender_name,
+                            "reason": reason,
+                            "message_excerpt": message_excerpt,
+                        },
                         timeout=aiohttp.ClientTimeout(total=8),
                 ) as response:
                     response.raise_for_status()
