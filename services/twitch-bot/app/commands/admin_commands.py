@@ -48,7 +48,7 @@ class AdminCommands(commands.Component):
         if not (ctx.chatter.moderator or ctx.chatter.broadcaster):
             return
 
-        parts = ctx.message.content.split(maxsplit=2)
+        parts = ctx.message.text.split(maxsplit=2)
 
         if len(parts) < 3:
             await ctx.send("❌ Usage: !addcommand <trigger> <response>")
@@ -103,7 +103,7 @@ class AdminCommands(commands.Component):
         if not (ctx.chatter.moderator or ctx.chatter.broadcaster):
             return
 
-        parts = ctx.message.content.split(maxsplit=2)
+        parts = ctx.message.text.split(maxsplit=2)
 
         if len(parts) < 3:
             await ctx.send("❌ Usage: !editcommand <trigger> <neue_response>")
@@ -143,7 +143,7 @@ class AdminCommands(commands.Component):
         if not (ctx.chatter.moderator or ctx.chatter.broadcaster):
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
 
         if len(parts) < 2:
             await ctx.send("❌ Usage: !delcommand <trigger>")
@@ -181,7 +181,7 @@ class AdminCommands(commands.Component):
         if not (ctx.chatter.moderator or ctx.chatter.broadcaster):
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
 
         if len(parts) < 2:
             await ctx.send("❌ Usage: !togglecommand <trigger>")
@@ -228,7 +228,7 @@ class AdminCommands(commands.Component):
         if not (ctx.chatter.moderator or ctx.chatter.broadcaster):
             return
 
-        parts = ctx.message.content.split(maxsplit=2)
+        parts = ctx.message.text.split(maxsplit=2)
 
         if len(parts) < 3:
             await ctx.send("❌ Usage: !setcooldown <trigger> <sekunden>")

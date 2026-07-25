@@ -128,7 +128,7 @@ class BuiltinCommands(commands.Component):
             await ctx.send("❌ Kein Twitch-Token für diesen Channel gefunden.")
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
         new_title = parts[1] if len(parts) > 1 else None
 
         if new_title is None:
@@ -171,7 +171,7 @@ class BuiltinCommands(commands.Component):
             await ctx.send("❌ Kein Twitch-Token für diesen Channel gefunden.")
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
         new_game = parts[1] if len(parts) > 1 else None
 
         if new_game is None:
@@ -222,7 +222,7 @@ class BuiltinCommands(commands.Component):
             await ctx.send("❌ Kein Twitch-Token für diesen Channel gefunden.")
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
         target_login = parts[1].lstrip("@").strip() if len(parts) > 1 else None
 
         try:
@@ -262,7 +262,7 @@ class BuiltinCommands(commands.Component):
             await ctx.send("❌ Kein Twitch-Token für diesen Channel gefunden.")
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
         if len(parts) < 2:
             await ctx.send("❌ Usage: !shoutout <username>")
             return
@@ -296,7 +296,7 @@ class BuiltinCommands(commands.Component):
         if self._on_cooldown(broadcaster_id, "points"):
             return
 
-        parts = ctx.message.content.split(maxsplit=1)
+        parts = ctx.message.text.split(maxsplit=1)
         target_login = parts[1].lstrip("@").strip() if len(parts) > 1 else ctx.chatter.name
 
         data = await self._loyalty_get(

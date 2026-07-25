@@ -91,7 +91,7 @@ class GiveawayCommands(commands.Component):
         !giveaway draw           - Gewinner ziehen (Mod/Broadcaster)
         !giveaway status         - Teilnehmerzahl anzeigen
         """
-        parts = ctx.message.content.split()
+        parts = ctx.message.text.split()
         subcommand = parts[1].lower() if len(parts) > 1 else "enter"
 
         if subcommand == "start":

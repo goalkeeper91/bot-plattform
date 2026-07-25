@@ -162,7 +162,7 @@ class VoteCommands(commands.Component):
         !vote results                        - Show results
         !vote hero/map/genre/feature         - Quick templates (mod only)
         """
-        parts = ctx.message.content.split()
+        parts = ctx.message.text.split()
 
         if len(parts) < 2:
             await ctx.send("Usage: !vote <create|close|results|1-9|hero|map|genre>")
