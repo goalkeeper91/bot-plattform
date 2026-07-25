@@ -8,9 +8,11 @@ matched first, so a streamer's own custom command always wins over these
 built-ins with no extra code needed here.
 """
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
+import aiohttp
 from twitchio.ext import commands
 
 from app.utils.helix_client import HelixClient, HelixInsufficientScopeError
@@ -23,11 +25,19 @@ RECONNECT_HINT = (
     "Rechten - bitte im Dashboard Twitch neu verbinden."
 )
 
+# !points/!top talk directly to the Go backend's Loyalty tables - no Helix
+# call and no broadcaster token needed, unlike every other command in this
+# file, since Go itself already fetches chatters + credits points on its own
+# scheduler tick (see loyalty_service.go). Same BACKEND_BASE_URL/X-Bot-Secret
+# pattern as automod.py's calls to the Go backend.
+BACKEND_BASE_URL = "http://backend-go:8080"
+
 
 class BuiltinCommands(commands.Component):
     def __init__(self, bot):
         self.bot = bot
         self.helix = HelixClient(bot.twitch_config.client_id)
+        self.internal_secret = os.environ.get("BOT_INTERNAL_SECRET", "")
         # {f"{broadcaster_id}:{command}": last_used_timestamp}
         self.cooldowns: dict[str, float] = {}
 
@@ -63,6 +73,24 @@ class BuiltinCommands(commands.Component):
 
     async def _send_reconnect_hint(self, ctx: commands.Context):
         await ctx.send(RECONNECT_HINT)
+
+    async def _loyalty_get(self, path: str, params: dict) -> dict | None:
+        if not self.internal_secret:
+            LOGGER.warning("⚠️ BOT_INTERNAL_SECRET nicht gesetzt - Loyalty-Commands bleiben deaktiviert")
+            return None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                        f"{BACKEND_BASE_URL}{path}",
+                        params=params,
+                        headers={"X-Bot-Secret": self.internal_secret},
+                        timeout=aiohttp.ClientTimeout(total=8),
+                ) as response:
+                    response.raise_for_status()
+                    return await response.json()
+        except Exception:
+            LOGGER.exception("❌ Fehler beim Loyalty-Backend-Aufruf (%s)", path)
+            return None
 
     @commands.command(name="uptime")
     async def uptime(self, ctx: commands.Context):
@@ -261,3 +289,47 @@ class BuiltinCommands(commands.Component):
             f"🎉 Schaut mal bei {user['display_name']} vorbei{game_suffix}! "
             f"https://twitch.tv/{user['login']}"
         )
+
+    @commands.command(name="points")
+    async def points(self, ctx: commands.Context):
+        broadcaster_id = str(ctx.channel.id)
+        if self._on_cooldown(broadcaster_id, "points"):
+            return
+
+        parts = ctx.message.content.split(maxsplit=1)
+        target_login = parts[1].lstrip("@").strip() if len(parts) > 1 else ctx.chatter.name
+
+        data = await self._loyalty_get(
+            "/api/bot/loyalty/points",
+            {"broadcaster_id": broadcaster_id, "viewer_login": target_login},
+        )
+        if data is None:
+            await ctx.send("❌ Konnte die Punkte nicht abrufen.")
+            return
+
+        await ctx.send(f"🏆 {target_login} hat {data['points']} {data['points_name']}.")
+
+    @commands.command(name="top")
+    async def top(self, ctx: commands.Context):
+        broadcaster_id = str(ctx.channel.id)
+        if self._on_cooldown(broadcaster_id, "top"):
+            return
+
+        data = await self._loyalty_get(
+            "/api/bot/loyalty/leaderboard",
+            {"broadcaster_id": broadcaster_id, "limit": 5},
+        )
+        if data is None:
+            await ctx.send("❌ Konnte die Bestenliste nicht abrufen.")
+            return
+
+        entries = data.get("entries") or []
+        if not entries:
+            await ctx.send("Noch keine Einträge in der Bestenliste.")
+            return
+
+        ranking = ", ".join(
+            f"{i}. {entry['viewer_login']} ({entry['points']})"
+            for i, entry in enumerate(entries, start=1)
+        )
+        await ctx.send(f"🏆 Top {data['points_name']}: {ranking}")
