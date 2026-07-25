@@ -181,6 +181,7 @@ class GiveawayCommands(commands.Component):
         """
         !giveaway start <codewort> [subs]   - Giveaway starten (Mod/Broadcaster)
         !giveaway draw                      - Gewinner ziehen (Mod/Broadcaster)
+        !giveaway cancel                    - Ohne Gewinner beenden (Mod/Broadcaster)
         !giveaway status                    - Teilnehmerzahl anzeigen
 
         Teilnehmen ist KEIN !-Befehl - Zuschauer tippen einfach das Codewort.
@@ -192,10 +193,12 @@ class GiveawayCommands(commands.Component):
             await self._start(ctx, parts[2:])
         elif subcommand == "draw":
             await self._draw(ctx)
+        elif subcommand == "cancel":
+            await self._cancel(ctx)
         elif subcommand == "status":
             await self._status(ctx)
         else:
-            await ctx.send("Usage: !giveaway start <codewort> [subs] | !giveaway draw | !giveaway status")
+            await ctx.send("Usage: !giveaway start <codewort> [subs] | !giveaway draw | !giveaway cancel | !giveaway status")
 
     async def _start(self, ctx: commands.Context, args: list[str]):
         if not self._is_mod_or_broadcaster(ctx):
@@ -248,6 +251,23 @@ class GiveawayCommands(commands.Component):
 
         winner = data.get("winner_login", "?")
         await ctx.send(f"🎉 Der Gewinner ist @{winner}! Herzlichen Glückwunsch!")
+
+    async def _cancel(self, ctx: commands.Context):
+        if not self._is_mod_or_broadcaster(ctx):
+            return
+
+        broadcaster_id = str(ctx.channel.id)
+
+        status, data = await self._post("/api/bot/giveaways/cancel", {"broadcaster_id": broadcaster_id})
+        if status == 409:
+            await ctx.send("❌ Kein offenes Giveaway.")
+            return
+        if status != 200 or data is None:
+            await ctx.send("❌ Konnte das Giveaway nicht abbrechen.")
+            return
+
+        self.open_giveaways.pop(broadcaster_id, None)
+        await ctx.send("🚫 Giveaway abgebrochen.")
 
     async def _status(self, ctx: commands.Context):
         broadcaster_id = str(ctx.channel.id)
