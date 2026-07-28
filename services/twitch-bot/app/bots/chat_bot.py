@@ -14,6 +14,12 @@ from app.utils.bot_statistics import BotStatistics
 
 LOGGER = logging.getLogger("EventSubChatDebugBot")
 
+# How often reconcile_subscriptions() re-scans the DB for registered
+# channels that aren't in _subscribed_channels yet - the fallback net for a
+# JOIN_CHANNEL Redis signal that gets lost (e.g. published while the bot is
+# mid-restart). Same order of magnitude as AutomodFilter.RELOAD_INTERVAL_SECONDS.
+RECONCILE_INTERVAL_SECONDS = 180
+
 
 class EventSubChatDebugBot(commands.Bot):
     def __init__(self, *, twitch_config, db_pool, crypto, **kwargs: Any):
@@ -33,6 +39,7 @@ class EventSubChatDebugBot(commands.Bot):
         self.custom_commands = None
         self.automod = None
         self.giveaway_commands = None
+        self._reconcile_task = None
         self.start_time = datetime.now(timezone.utc)
         self._is_running = False  # ✅ Initial False
         self._bot_token_loaded = False # ✅ Track if bot token was successfully loaded
@@ -82,6 +89,8 @@ class EventSubChatDebugBot(commands.Bot):
         await self.automod.reload_settings()
         await self.automod.start()
         LOGGER.info("✅ Automod-Filter initialisiert")
+
+        await self.start_reconciliation()
 
         self.custom_commands = CustomCommands(self)
         await self.add_component(self.custom_commands)
@@ -369,6 +378,61 @@ class EventSubChatDebugBot(commands.Bot):
 
         LOGGER.info("✅ Channel erfolgreich subscribed: %s", twitch_user_id)
 
+    async def start_reconciliation(self):
+        """Startet den periodischen Reconciliation-Loop (siehe RECONCILE_INTERVAL_SECONDS)."""
+        if not self._reconcile_task:
+            self._reconcile_task = asyncio.create_task(self._reconcile_loop())
+            LOGGER.info("✅ Onboarding-Reconciliation gestartet")
+
+    async def stop_reconciliation(self):
+        """Stoppt den periodischen Reconciliation-Loop."""
+        if self._reconcile_task:
+            self._reconcile_task.cancel()
+            try:
+                await self._reconcile_task
+            except asyncio.CancelledError:
+                pass
+            LOGGER.info("🛑 Onboarding-Reconciliation gestoppt")
+
+    async def _reconcile_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(RECONCILE_INTERVAL_SECONDS)
+                await self.reconcile_subscriptions()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                LOGGER.error("❌ Periodische Reconciliation fehlgeschlagen: %s", e, exc_info=True)
+
+    async def reconcile_subscriptions(self):
+        """Fallback-Netz für ein verlorenes JOIN_CHANNEL-Redis-Signal: scannt
+        alle registrierten Nicht-Bot-Kanäle gegen _subscribed_channels und
+        holt jeden fehlenden über das bereits vorhandene join_channel_by_id
+        nach - keine eigene Entschlüsselungs-/Subscribe-Logik, nur der
+        Abgleich ist neu."""
+        if not self._is_running:
+            return
+
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT t.twitch_user_id
+                FROM twitch_auth_tokens t
+                JOIN users u ON t.twitch_user_id = u.twitch_id
+                WHERE u.is_bot = FALSE
+            """)
+
+        missing = [
+            str(row["twitch_user_id"])
+            for row in rows
+            if str(row["twitch_user_id"]) not in self._subscribed_channels
+        ]
+        if not missing:
+            return
+
+        LOGGER.info("🔁 Reconciliation: %d nicht abonnierte(r) Kanal/Kanäle gefunden, hole nach", len(missing))
+        for user_id in missing:
+            await self.join_channel_by_id(user_id)
+
     async def reload_commands(self, twitch_user_id: str = None):
         LOGGER.info("🔄 Reloading commands für user_id=%s", twitch_user_id or "ALL")
 
@@ -470,6 +534,8 @@ class EventSubChatDebugBot(commands.Bot):
 
         if self.automod:
             await self.automod.stop()
+
+        await self.stop_reconciliation()
 
         if self.redis_handler:
             await self.redis_handler.stop()
