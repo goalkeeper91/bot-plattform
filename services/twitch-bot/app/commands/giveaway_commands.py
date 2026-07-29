@@ -16,6 +16,7 @@ Each backend call still goes straight to the Go backend's bot-internal
 same X-Bot-Secret pattern as automod.py and the Loyalty commands in
 builtin_commands.py.
 """
+import asyncio
 import logging
 import os
 import time
@@ -29,6 +30,12 @@ BACKEND_BASE_URL = "http://backend-go:8080"
 
 COOLDOWN_SECONDS = 5
 
+# Entries are batched instead of confirmed one-by-one (a busy giveaway would
+# otherwise spam the chat with one "ist dabei!" per entrant) - every
+# ANNOUNCE_INTERVAL_SECONDS, any channel with new entries since the last
+# announcement gets a single summary message.
+ANNOUNCE_INTERVAL_SECONDS = 30
+
 
 class GiveawayCommands(commands.Component):
     def __init__(self, bot):
@@ -38,6 +45,9 @@ class GiveawayCommands(commands.Component):
         # {broadcaster_id: lowercased keyword} - only channels with a
         # currently open giveaway have an entry.
         self.open_giveaways: dict[str, str] = {}
+        # {broadcaster_id: (broadcaster_name, new_entries_since_last_announcement)}
+        self.pending_entries: dict[str, tuple[str, int]] = {}
+        self._announce_task = None
 
     @staticmethod
     def _is_mod_or_broadcaster(ctx: commands.Context) -> bool:
@@ -127,6 +137,42 @@ class GiveawayCommands(commands.Component):
         else:
             self.open_giveaways.pop(broadcaster_id, None)
 
+    async def start(self):
+        """Startet den periodischen Batch-Announce-Loop (siehe ANNOUNCE_INTERVAL_SECONDS)."""
+        if not self._announce_task:
+            self._announce_task = asyncio.create_task(self._announce_loop())
+            LOGGER.info("✅ Giveaway-Eintragungs-Sammelankündigung gestartet")
+
+    async def stop(self):
+        """Stoppt den periodischen Batch-Announce-Loop."""
+        if self._announce_task:
+            self._announce_task.cancel()
+            try:
+                await self._announce_task
+            except asyncio.CancelledError:
+                pass
+            LOGGER.info("🛑 Giveaway-Eintragungs-Sammelankündigung gestoppt")
+
+    async def _announce_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(ANNOUNCE_INTERVAL_SECONDS)
+                await self._flush_pending_entries()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                LOGGER.exception("❌ Fehler beim Senden der Giveaway-Sammelankündigung")
+
+    async def _flush_pending_entries(self):
+        """Postet für jeden Kanal mit neuen Eintragungen seit dem letzten Tick
+        genau eine Sammel-Nachricht statt einer pro Teilnehmer."""
+        pending, self.pending_entries = self.pending_entries, {}
+
+        for broadcaster_name, count in pending.values():
+            if count <= 0:
+                continue
+            await self._send_to_broadcaster(broadcaster_name, f"🎉 {count} Neue User eingetragen!")
+
     async def check_message(self, message) -> bool:
         """Prüft JEDE Chat-Nachricht gegen das offene Codewort des Kanals -
         kein !-Präfix, exaktes Match (Groß-/Kleinschreibung wird ignoriert).
@@ -161,9 +207,11 @@ class GiveawayCommands(commands.Component):
             return False
 
         if data.get("entered"):
-            await self._send_to_broadcaster(message.broadcaster.name, f"✅ {message.chatter.name} ist dabei!")
+            _, count = self.pending_entries.get(broadcaster_id, (message.broadcaster.name, 0))
+            self.pending_entries[broadcaster_id] = (message.broadcaster.name, count + 1)
         # Wiederholtes Tippen des Codeworts ohne neue Eintragung bleibt
-        # bewusst still - kein Bestätigungs-Spam.
+        # bewusst still - kein Bestätigungs-Spam. Die eigentliche Rückmeldung
+        # kommt gebündelt über den periodischen _announce_loop (siehe start()).
         return True
 
     async def _send_to_broadcaster(self, broadcaster_name: str, text: str):
@@ -248,6 +296,7 @@ class GiveawayCommands(commands.Component):
             return
 
         self.open_giveaways.pop(broadcaster_id, None)
+        self.pending_entries.pop(broadcaster_id, None)
 
         winner = data.get("winner_login", "?")
         await ctx.send(f"🎉 Der Gewinner ist @{winner}! Herzlichen Glückwunsch!")
@@ -267,6 +316,7 @@ class GiveawayCommands(commands.Component):
             return
 
         self.open_giveaways.pop(broadcaster_id, None)
+        self.pending_entries.pop(broadcaster_id, None)
         await ctx.send("🚫 Giveaway abgebrochen.")
 
     async def _status(self, ctx: commands.Context):

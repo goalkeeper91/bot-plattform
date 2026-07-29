@@ -105,6 +105,7 @@ class EventSubChatDebugBot(commands.Bot):
 
         self.giveaway_commands = GiveawayCommands(self)
         await self.giveaway_commands.reload_open_giveaways()
+        await self.giveaway_commands.start()
         await self.add_component(self.giveaway_commands)
         LOGGER.info("✅ Giveaway Commands Component geladen (!giveaway start/draw/status, Teilnahme per Codewort)")
 
@@ -534,6 +535,9 @@ class EventSubChatDebugBot(commands.Bot):
 
         if self.automod:
             await self.automod.stop()
+
+        if self.giveaway_commands:
+            await self.giveaway_commands.stop()
 
         await self.stop_reconciliation()
 
