@@ -105,7 +105,13 @@ class BuiltinCommands(commands.Component):
 
         try:
             stream = await self.helix.get_streams(broadcaster_id, token)
-        except HelixInsufficientScopeError:
+        except HelixInsufficientScopeError as e:
+            # Raised on ANY Twitch 401, not just an actual missing-scope
+            # response - logging the raw body here closes a real diagnostic
+            # gap, since the chat-facing hint alone doesn't say whether this
+            # was truly a missing scope or (just as likely, since most calls
+            # in this file need no scope at all) a stale/invalid stored token.
+            LOGGER.warning("⚠️ Twitch 401 für %s in %s: %s", ctx.channel.name, broadcaster_id, e)
             await self._send_reconnect_hint(ctx)
             return
         except Exception:
@@ -152,7 +158,13 @@ class BuiltinCommands(commands.Component):
 
         try:
             await self.helix.modify_channel_info(broadcaster_id, token, title=new_title)
-        except HelixInsufficientScopeError:
+        except HelixInsufficientScopeError as e:
+            # Raised on ANY Twitch 401, not just an actual missing-scope
+            # response - logging the raw body here closes a real diagnostic
+            # gap, since the chat-facing hint alone doesn't say whether this
+            # was truly a missing scope or (just as likely, since most calls
+            # in this file need no scope at all) a stale/invalid stored token.
+            LOGGER.warning("⚠️ Twitch 401 für %s in %s: %s", ctx.channel.name, broadcaster_id, e)
             await self._send_reconnect_hint(ctx)
             return
         except Exception:
@@ -200,7 +212,13 @@ class BuiltinCommands(commands.Component):
                 await ctx.send(f'❌ Spiel "{new_game}" wurde auf Twitch nicht gefunden.')
                 return
             await self.helix.modify_channel_info(broadcaster_id, token, game_id=game_data["id"])
-        except HelixInsufficientScopeError:
+        except HelixInsufficientScopeError as e:
+            # Raised on ANY Twitch 401, not just an actual missing-scope
+            # response - logging the raw body here closes a real diagnostic
+            # gap, since the chat-facing hint alone doesn't say whether this
+            # was truly a missing scope or (just as likely, since most calls
+            # in this file need no scope at all) a stale/invalid stored token.
+            LOGGER.warning("⚠️ Twitch 401 für %s in %s: %s", ctx.channel.name, broadcaster_id, e)
             await self._send_reconnect_hint(ctx)
             return
         except Exception:
@@ -236,7 +254,13 @@ class BuiltinCommands(commands.Component):
                 target_id, target_name = str(ctx.chatter.id), ctx.chatter.name
 
             follower = await self.helix.get_channel_follower(broadcaster_id, token, target_id)
-        except HelixInsufficientScopeError:
+        except HelixInsufficientScopeError as e:
+            # Raised on ANY Twitch 401, not just an actual missing-scope
+            # response - logging the raw body here closes a real diagnostic
+            # gap, since the chat-facing hint alone doesn't say whether this
+            # was truly a missing scope or (just as likely, since most calls
+            # in this file need no scope at all) a stale/invalid stored token.
+            LOGGER.warning("⚠️ Twitch 401 für %s in %s: %s", ctx.channel.name, broadcaster_id, e)
             await self._send_reconnect_hint(ctx)
             return
         except Exception:
@@ -275,7 +299,13 @@ class BuiltinCommands(commands.Component):
                 await ctx.send(f'❌ User "{target_login}" nicht gefunden.')
                 return
             info = await self.helix.get_channel_info(user["id"], token)
-        except HelixInsufficientScopeError:
+        except HelixInsufficientScopeError as e:
+            # Raised on ANY Twitch 401, not just an actual missing-scope
+            # response - logging the raw body here closes a real diagnostic
+            # gap, since the chat-facing hint alone doesn't say whether this
+            # was truly a missing scope or (just as likely, since most calls
+            # in this file need no scope at all) a stale/invalid stored token.
+            LOGGER.warning("⚠️ Twitch 401 für %s in %s: %s", ctx.channel.name, broadcaster_id, e)
             await self._send_reconnect_hint(ctx)
             return
         except Exception:
