@@ -9,6 +9,7 @@ built-ins with no extra code needed here.
 """
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 
@@ -18,6 +19,19 @@ from twitchio.ext import commands
 from app.utils.helix_client import HelixClient, HelixInsufficientScopeError
 
 LOGGER = logging.getLogger("BuiltinCommands")
+
+# Some chat clients/apps append an invisible Unicode character (e.g. the
+# combining grapheme joiner) to defeat Twitch's "identical message sent too
+# fast" filter - .strip() doesn't remove it since it isn't whitespace, so a
+# username argument like "!shoutout SomeUser<invisible-char>" would silently
+# fail Twitch's user lookup. Twitch logins are only ever [a-zA-Z0-9_], so
+# stripping everything else is a safe, exact fix rather than trying to
+# enumerate every invisible-character variant seen in the wild.
+_LOGIN_CHARS = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _clean_login(raw: str) -> str:
+    return _LOGIN_CHARS.sub("", raw.lstrip("@"))
 
 COOLDOWN_SECONDS = 10
 RECONNECT_HINT = (
@@ -241,7 +255,7 @@ class BuiltinCommands(commands.Component):
             return
 
         parts = ctx.message.text.split(maxsplit=1)
-        target_login = parts[1].lstrip("@").strip() if len(parts) > 1 else None
+        target_login = _clean_login(parts[1]) if len(parts) > 1 else None
 
         try:
             if target_login:
@@ -291,7 +305,7 @@ class BuiltinCommands(commands.Component):
             await ctx.send("❌ Usage: !shoutout <username>")
             return
 
-        target_login = parts[1].lstrip("@").strip()
+        target_login = _clean_login(parts[1])
 
         try:
             user = await self.helix.get_users(target_login, token)
@@ -327,7 +341,7 @@ class BuiltinCommands(commands.Component):
             return
 
         parts = ctx.message.text.split(maxsplit=1)
-        target_login = parts[1].lstrip("@").strip() if len(parts) > 1 else ctx.chatter.name
+        target_login = _clean_login(parts[1]) if len(parts) > 1 else ctx.chatter.name
 
         data = await self._loyalty_get(
             "/api/bot/loyalty/points",
